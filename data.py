@@ -1,5 +1,6 @@
 import yfinance as yf
 import pandas as pd
+import streamlit as st
 
 # Small sample of tickers to test with — we'll expand to 50-100 later
 TRAINING_TICKERS = ["AAPL", "MSFT", "TSLA", "JPM", "XOM"]
@@ -9,6 +10,7 @@ START_DATE = "2005-01-01"
 END_DATE = "2024-12-31"
 
 
+@st.cache_data(ttl=3600)
 def download_ticker(ticker: str) -> pd.DataFrame:
     """Download adjusted close and volume for a single ticker."""
     raw = yf.download(ticker, start=START_DATE, end=END_DATE, auto_adjust=True, progress=False)
