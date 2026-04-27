@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 from dotenv import load_dotenv
 
 from model import predict, FEATURE_COLS
-# from llm import generate_commentary
+from llm import generate_commentary
 from data import download_ticker, BENCHMARK_TICKER
 
 load_dotenv()
@@ -174,7 +174,7 @@ if analyse:
     st.divider()
 
     # --- AI Commentary ---
-    # st.subheader("AI Analyst Commentary")
-    # with st.spinner("Generating commentary..."):
-    #     commentary = generate_commentary(result)
-    # st.markdown(commentary)
+    st.subheader("AI Analyst Commentary")
+    with st.spinner("Generating commentary..."):
+        commentary = generate_commentary(result)
+    st.markdown(commentary)
