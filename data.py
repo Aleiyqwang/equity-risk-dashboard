@@ -14,15 +14,21 @@ END_DATE = date.today().isoformat()
 @st.cache_data(ttl=3600)
 def download_ticker(ticker: str) -> pd.DataFrame:
     """Download adjusted close and volume for a single ticker."""
-    raw = yf.download(ticker, start=START_DATE, end=END_DATE, auto_adjust=True, progress=False)
-    if raw.empty:
-        print(f"  WARNING: no data returned for {ticker}")
-        return pd.DataFrame()
+    for attempt in range(3):
+        try:
+            t = yf.Ticker(ticker)
+            raw = t.history(start=START_DATE, end=END_DATE, auto_adjust=True)
+            if not raw.empty:
+                df = raw[["Close", "Volume"]].copy()
+                df.columns = ["close", "volume"]
+                df["ticker"] = ticker
+                df.index = df.index.tz_localize(None)
+                return df
+        except Exception:
+            pass
 
-    df = raw[["Close", "Volume"]].copy()
-    df.columns = ["close", "volume"]
-    df["ticker"] = ticker
-    return df
+    print(f"  WARNING: no data returned for {ticker}")
+    return pd.DataFrame()
 
 
 def download_all(tickers: list[str]) -> pd.DataFrame:
