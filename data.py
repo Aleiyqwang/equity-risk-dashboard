@@ -1,13 +1,14 @@
 import yfinance as yf
 import pandas as pd
 import streamlit as st
+from datetime import date
 
 # Small sample of tickers to test with — we'll expand to 50-100 later
 TRAINING_TICKERS = ["AAPL", "MSFT", "TSLA", "JPM", "XOM"]
 BENCHMARK_TICKER = "^GSPC"
 
 START_DATE = "2005-01-01"
-END_DATE = "2024-12-31"
+END_DATE = date.today().isoformat()
 
 
 @st.cache_data(ttl=3600)
