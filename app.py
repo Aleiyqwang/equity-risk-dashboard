@@ -12,6 +12,8 @@ from data import download_ticker, BENCHMARK_TICKER
 
 load_dotenv()
 
+# --- Constants ---
+
 FEATURE_LABELS = {
     "vol_60d": "60-Day Volatility",
     "vol_20d": "20-Day Volatility",
@@ -25,6 +27,13 @@ FEATURE_LABELS = {
     "price_vs_ma200": "Price vs 200-Day Average",
     "beta": "Market Beta (vs S&P 500)",
     "relative_return_20d": "Relative Return vs S&P 500",
+}
+
+WATCHLISTS = {
+    "Mag 7":        ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA"],
+    "US Tech":      ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "AVGO", "ADBE", "CRM", "QCOM"],
+    "US Financials":["JPM", "BAC", "GS", "MS", "WFC", "BLK", "V", "MA", "AXP", "SPGI"],
+    "US Healthcare":["UNH", "JNJ", "ABBV", "LLY", "PFE", "MRK", "TMO", "DHR", "ABT", "AMGN"],
 }
 
 POPULAR_TICKERS = sorted([
@@ -69,7 +78,6 @@ def _save_usage(data: dict):
 
 
 def _try_consume_call() -> tuple[bool, int]:
-    """Atomically check and increment the daily counter. Returns (allowed, calls_remaining)."""
     usage = _load_usage()
     if usage["count"] >= DAILY_LIMIT:
         return False, 0
@@ -80,80 +88,23 @@ def _try_consume_call() -> tuple[bool, int]:
 
 # --- Session state init ---
 
-for key in ("result", "price_data", "bench_data", "commentary", "analysed_ticker"):
+for key in ("result", "price_data", "bench_data", "commentary", "analysed_ticker",
+            "screener_rows", "screener_full", "screener_drill",
+            "screener_drill_price", "screener_drill_bench"):
     if key not in st.session_state:
         st.session_state[key] = None
 
-
-# --- Page ---
-
-st.set_page_config(page_title="Equity Drawdown Risk Dashboard", layout="wide")
-
-st.title("📉 Equity Drawdown Risk Scoring Dashboard")
-st.caption("Machine learning-powered downside risk scoring for US equities.")
-
-st.markdown("""
-Uses a **Gradient Boosting model** trained on 50 S&P 500 stocks (2005–2019) to estimate the probability
-that a stock will fall **more than 10% within the next 20 trading days**.
-For educational and research purposes — not financial advice.
-""")
-
-st.markdown("📊 Risk Score &nbsp;·&nbsp; 📈 Price & Volatility Charts &nbsp;·&nbsp; 🎯 Top Risk Drivers &nbsp;·&nbsp; 🤖 AI Analyst Commentary &nbsp;·&nbsp; 🔬 Model Performance")
-
-st.divider()
-
-# --- Ticker Input ---
-col_input, col_btn = st.columns([3, 1])
-with col_input:
-    ticker = st.selectbox(
-        "Ticker",
-        options=POPULAR_TICKERS,
-        index=None,
-        placeholder="Search ticker (e.g. TSLA, AAPL)...",
-        label_visibility="collapsed",
-    )
-
-with col_btn:
-    analyse = st.button("Analyse", use_container_width=True)
-
-if analyse:
-    if not ticker:
-        st.warning("Please select a ticker first.")
-        st.stop()
-
-    # Clear old commentary if the ticker changed
-    if ticker != st.session_state.analysed_ticker:
-        st.session_state.commentary = None
-
-    with st.spinner(f"Fetching data and scoring {ticker}..."):
-        try:
-            st.session_state.result = predict(ticker)
-        except FileNotFoundError:
-            st.error("Model file not found. Please ensure `model/risk_model.pkl` exists before running the app.")
-            st.stop()
-        except ValueError as e:
-            st.error(f"Could not analyse **{ticker}**: {e}. This dashboard supports US-listed stocks only.")
-            st.stop()
-
-    with st.spinner("Loading chart data..."):
-        st.session_state.price_data = download_ticker(ticker)
-        st.session_state.bench_data = download_ticker(BENCHMARK_TICKER)
-
-    st.session_state.analysed_ticker = ticker
+if "screener_commentary" not in st.session_state:
+    st.session_state.screener_commentary = {}  # ticker → commentary string
 
 
-# --- Results (shown whenever a result is stored, survives button re-clicks) ---
+# --- Shared report renderer (used by both tabs) ---
 
-if st.session_state.result is not None:
-    result = st.session_state.result
-    price_data = st.session_state.price_data
-    bench_data = st.session_state.bench_data
+def _render_report(result: dict, price_data: pd.DataFrame, bench_data: pd.DataFrame):
+    """Renders score metrics, charts, and SHAP drivers for a given prediction."""
 
-    # --- Top Section: Score, Probability, Classification ---
     col1, col2, col3 = st.columns(3)
-
     risk_color = {"Low": "green", "Medium": "orange", "High": "red"}[result["classification"]]
-
     col1.metric("Risk Score", f"{result['risk_score']} / 100",
                 help="Composite score (0–100) that measures how stressed this stock's risk signals are relative to its own price history. Each of the 12 model features is ranked as a percentile within this stock's historical distribution, then weighted by the GBM's feature importances. A score of 80 means current signals look worse than 80% of this stock's own trading history.")
     col2.metric("Drawdown Probability (20d)", f"{result['probability']:.1%}",
@@ -185,7 +136,6 @@ if st.session_state.result is not None:
         st.caption(f"Evaluated on out-of-sample test data ({MODEL_METRICS['test_period']}), never seen during training.")
         st.divider()
 
-    # --- Charts ---
     st.subheader("Price History")
     fig_price = go.Figure()
     fig_price.add_trace(go.Scatter(
@@ -248,60 +198,26 @@ if st.session_state.result is not None:
 
     st.divider()
 
-    # --- SHAP Drivers ---
     st.subheader("Top Risk Drivers")
     st.caption("SHAP values show how each signal pushed this prediction up or down from the model baseline. Red = increasing drawdown risk, blue = reducing it.")
 
-    shap_items = list(result["top_drivers"].items())
-    # Sort by absolute value descending, then reverse so largest is at top of horizontal chart
-    shap_items = sorted(shap_items, key=lambda x: abs(x[1]))
+    shap_items = sorted(result["top_drivers"].items(), key=lambda x: abs(x[1]))
     features = [FEATURE_LABELS.get(f, f) for f, _ in shap_items]
     shap_vals = [v for _, v in shap_items]
     bar_colors = ["#d62728" if v > 0 else "#4878cf" for v in shap_vals]
 
     fig_imp = go.Figure(go.Bar(
-        x=shap_vals,
-        y=features,
-        orientation="h",
+        x=shap_vals, y=features, orientation="h",
         marker_color=bar_colors,
         text=[f"{v:+.3f}" for v in shap_vals],
         textposition="outside",
     ))
     fig_imp.add_vline(x=0, line=dict(color="white", width=1))
     fig_imp.update_layout(
-        height=320,
-        margin=dict(l=0, r=70, t=20, b=0),
+        height=320, margin=dict(l=0, r=70, t=20, b=0),
         xaxis=dict(title="SHAP value (contribution to drawdown probability, log-odds)"),
     )
     st.plotly_chart(fig_imp, use_container_width=True)
-
-    st.divider()
-
-    # --- AI Commentary ---
-    st.subheader("AI Analyst Commentary")
-
-    if st.session_state.commentary is not None:
-        # Already generated — just display it
-        st.markdown(st.session_state.commentary)
-    else:
-        usage = _load_usage()
-        remaining = DAILY_LIMIT - usage["count"]
-
-        if remaining <= 0:
-            st.warning(
-                "The daily AI commentary limit (5 calls/day) has been reached. "
-                "Check back tomorrow."
-            )
-        else:
-            st.caption(f"AI commentary uses the OpenAI API. Limit: {remaining} call{'s' if remaining != 1 else ''} remaining today.")
-            if st.button("Generate AI Commentary", use_container_width=False):
-                allowed, calls_left = _try_consume_call()
-                if not allowed:
-                    st.warning("Daily limit reached — no AI commentaries left today.")
-                else:
-                    with st.spinner("Generating commentary..."):
-                        st.session_state.commentary = generate_commentary(result)
-                    st.rerun()
 
     st.divider()
 
@@ -326,3 +242,218 @@ if st.session_state.result is not None:
 
 **Top Risk Drivers (SHAP):** Feature contributions are computed using SHAP (SHapley Additive exPlanations) applied to each individual prediction. Unlike global feature importances, SHAP values are instance-specific — they show how much each signal pushed this particular prediction up or down from the model's baseline. Positive values increase the predicted drawdown probability; negative values reduce it.
         """)
+
+
+# --- Page ---
+
+st.set_page_config(page_title="Equity Drawdown Risk Dashboard", layout="wide")
+
+st.title("📉 Equity Drawdown Risk Scoring Dashboard")
+st.caption("Machine learning-powered downside risk scoring for US equities.")
+st.markdown("""
+Uses a **Gradient Boosting model** trained on 50 S&P 500 stocks (2005–2019) to estimate the probability
+that a stock will fall **more than 10% within the next 20 trading days**.
+For educational and research purposes — not financial advice.
+""")
+st.divider()
+
+tab1, tab2 = st.tabs(["Single Stock", "Watchlist Screener"])
+
+
+# ── TAB 1: Single Stock ────────────────────────────────────────────────────────
+
+with tab1:
+    col_input, col_btn = st.columns([3, 1])
+    with col_input:
+        ticker = st.selectbox(
+            "Ticker",
+            options=POPULAR_TICKERS,
+            index=None,
+            placeholder="Search ticker (e.g. TSLA, AAPL)...",
+            label_visibility="collapsed",
+        )
+    with col_btn:
+        analyse = st.button("Analyse", use_container_width=True)
+
+    if analyse:
+        if not ticker:
+            st.warning("Please select a ticker first.")
+            st.stop()
+
+        if ticker != st.session_state.analysed_ticker:
+            st.session_state.commentary = None
+
+        with st.spinner(f"Fetching data and scoring {ticker}..."):
+            try:
+                st.session_state.result = predict(ticker)
+            except FileNotFoundError:
+                st.error("Model file not found. Please ensure `model/risk_model.pkl` exists.")
+                st.stop()
+            except ValueError as e:
+                st.error(f"Could not analyse **{ticker}**: {e}. This dashboard supports US-listed stocks only.")
+                st.stop()
+
+        with st.spinner("Loading chart data..."):
+            st.session_state.price_data = download_ticker(ticker)
+            st.session_state.bench_data = download_ticker(BENCHMARK_TICKER)
+
+        st.session_state.analysed_ticker = ticker
+
+    if st.session_state.result is not None:
+        _render_report(
+            st.session_state.result,
+            st.session_state.price_data,
+            st.session_state.bench_data,
+        )
+
+        # AI commentary — only in single stock tab
+        st.subheader("AI Analyst Commentary")
+        if st.session_state.commentary is not None:
+            st.markdown(st.session_state.commentary)
+        else:
+            usage = _load_usage()
+            remaining = DAILY_LIMIT - usage["count"]
+            if remaining <= 0:
+                st.warning("The daily AI commentary limit (5 calls/day) has been reached. Check back tomorrow.")
+            else:
+                st.caption(f"AI commentary uses the OpenAI API. Limit: {remaining} call{'s' if remaining != 1 else ''} remaining today.")
+                if st.button("Generate AI Commentary", use_container_width=False):
+                    allowed, _ = _try_consume_call()
+                    if not allowed:
+                        st.warning("Daily limit reached — no AI commentaries left today.")
+                    else:
+                        with st.spinner("Generating commentary..."):
+                            st.session_state.commentary = generate_commentary(st.session_state.result)
+                        st.rerun()
+
+
+# ── TAB 2: Watchlist Screener ──────────────────────────────────────────────────
+
+with tab2:
+    st.markdown("Score an entire watchlist at once and rank stocks by drawdown risk.")
+    st.caption("Uses the same full SHAP analysis as the single stock view — no shortcuts.")
+
+    # Watchlist selection
+    col_wl, col_custom = st.columns([2, 3])
+    with col_wl:
+        preset = st.selectbox(
+            "Preset watchlist",
+            options=list(WATCHLISTS.keys()) + ["Custom"],
+            index=0,
+        )
+    with col_custom:
+        if preset == "Custom":
+            custom_input = st.text_input(
+                "Enter tickers (comma-separated)",
+                placeholder="e.g. AAPL, TSLA, JPM, NVDA",
+            )
+            tickers_to_scan = [t.strip().upper() for t in custom_input.split(",") if t.strip()]
+        else:
+            tickers_to_scan = WATCHLISTS[preset]
+            st.markdown(f"**Tickers:** {', '.join(tickers_to_scan)}")
+
+    run_screener = st.button("Run Screener", use_container_width=False)
+
+    if run_screener:
+        if not tickers_to_scan:
+            st.warning("Please enter at least one ticker.")
+        else:
+            st.session_state.screener_rows = []
+            st.session_state.screener_full = {}
+            st.session_state.screener_drill = None
+            st.session_state.screener_commentary = {}
+
+            failed = []
+            progress_bar = st.progress(0, text="Starting...")
+
+            for i, t in enumerate(tickers_to_scan):
+                progress_bar.progress((i + 1) / len(tickers_to_scan), text=f"Scoring {t}... ({i+1}/{len(tickers_to_scan)})")
+                try:
+                    res = predict(t)
+                    top_feature = max(res["top_drivers"], key=lambda k: abs(res["top_drivers"][k]))
+                    top_val = res["top_drivers"][top_feature]
+                    direction = "↑" if top_val > 0 else "↓"
+                    top_driver_label = f"{direction} {FEATURE_LABELS.get(top_feature, top_feature)}"
+
+                    st.session_state.screener_rows.append({
+                        "Ticker": t,
+                        "Risk Score": res["risk_score"],
+                        "Probability": res["probability"],
+                        "Classification": res["classification"],
+                        "Top SHAP Driver": top_driver_label,
+                    })
+                    st.session_state.screener_full[t] = res
+                except Exception:
+                    failed.append(t)
+
+            progress_bar.empty()
+
+            if failed:
+                st.warning(f"Could not score: {', '.join(failed)}. These tickers were skipped.")
+
+    # Results table
+    if st.session_state.screener_rows:
+        results_df = pd.DataFrame(st.session_state.screener_rows).sort_values("Risk Score", ascending=False).reset_index(drop=True)
+
+        def _style_classification(val):
+            colors = {"Low": "color: #2ca02c", "Medium": "color: orange", "High": "color: #d62728"}
+            return colors.get(val, "")
+
+        styled = (
+            results_df.style
+            .map(_style_classification, subset=["Classification"])
+            .background_gradient(subset=["Risk Score"], cmap="RdYlGn_r", vmin=0, vmax=100)
+            .format({"Probability": "{:.1%}", "Risk Score": "{:.0f}"})
+        )
+
+        st.subheader("Risk Ranking")
+        st.dataframe(styled, use_container_width=True, hide_index=True)
+
+        st.divider()
+
+        # Drill-down
+        st.subheader("Drill Into a Stock")
+        scored_tickers = [row["Ticker"] for row in st.session_state.screener_rows]
+        drill_ticker = st.selectbox(
+            "Select ticker for full report",
+            options=scored_tickers,
+            index=None,
+            placeholder="Select a ticker...",
+            label_visibility="collapsed",
+            key="drill_selectbox",
+        )
+
+        if drill_ticker and drill_ticker != st.session_state.screener_drill:
+            st.session_state.screener_drill = drill_ticker
+            with st.spinner(f"Loading chart data for {drill_ticker}..."):
+                st.session_state.screener_drill_price = download_ticker(drill_ticker)
+                st.session_state.screener_drill_bench = download_ticker(BENCHMARK_TICKER)
+
+        if st.session_state.screener_drill and st.session_state.screener_drill_price is not None:
+            drill_result = st.session_state.screener_full[st.session_state.screener_drill]
+            _render_report(
+                drill_result,
+                st.session_state.screener_drill_price,
+                st.session_state.screener_drill_bench,
+            )
+
+            # AI commentary for drill-down — stored per ticker so switching stocks doesn't lose it
+            st.subheader("AI Analyst Commentary")
+            drill_ticker_key = st.session_state.screener_drill
+            if drill_ticker_key in st.session_state.screener_commentary:
+                st.markdown(st.session_state.screener_commentary[drill_ticker_key])
+            else:
+                usage = _load_usage()
+                remaining = DAILY_LIMIT - usage["count"]
+                if remaining <= 0:
+                    st.warning("The daily AI commentary limit (5 calls/day) has been reached. Check back tomorrow.")
+                else:
+                    st.caption(f"AI commentary uses the OpenAI API. Limit: {remaining} call{'s' if remaining != 1 else ''} remaining today.")
+                    if st.button("Generate AI Commentary", use_container_width=False, key="screener_commentary_btn"):
+                        allowed, _ = _try_consume_call()
+                        if not allowed:
+                            st.warning("Daily limit reached — no AI commentaries left today.")
+                        else:
+                            with st.spinner("Generating commentary..."):
+                                st.session_state.screener_commentary[drill_ticker_key] = generate_commentary(drill_result)
+                            st.rerun()
