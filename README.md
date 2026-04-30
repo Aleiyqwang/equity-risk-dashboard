@@ -1,6 +1,6 @@
 # Equity Drawdown Risk Scoring Dashboard
 
-A machine learning dashboard that scores the near-term drawdown risk of any US-listed stock. Enter a ticker and the app predicts the probability of a >10% price drop within the next 20 trading days, explains what is driving the risk for that specific stock today, and generates AI analyst commentary.
+A machine learning dashboard that scores the near-term drawdown risk of US equities. Analyse a single stock in depth, or run a full watchlist scan to rank multiple stocks by risk in one go.
 
 **Live app:** https://equity-risk-dashboard-yuqing.streamlit.app/
 
@@ -8,12 +8,19 @@ A machine learning dashboard that scores the near-term drawdown risk of any US-l
 
 ## What it does
 
+**Single Stock tab**
 - Fetches live price data from Yahoo Finance
 - Scores the stock 0–100 and classifies it as Low / Medium / High risk
 - Shows the probability of a >10% drawdown in the next 20 trading days
 - Visualises price history, rolling volatility vs S&P 500, and drawdown from peak
 - Explains the top risk drivers using SHAP values — instance-specific, not global averages
 - Generates analyst-style commentary via GPT-4o-mini (rate-limited to 5 calls/day)
+
+**Watchlist Screener tab**
+- Select a preset watchlist (Mag 7, US Tech, US Financials, US Healthcare) or enter a custom list
+- Scores all tickers using the same full SHAP analysis as the single stock view
+- Ranks results by risk score in a colour-coded table with top SHAP driver per stock
+- Drill into any ticker for the full report and AI commentary
 
 ## How it works
 

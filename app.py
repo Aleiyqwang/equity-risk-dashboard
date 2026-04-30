@@ -114,6 +114,7 @@ def _render_report(result: dict, price_data: pd.DataFrame, bench_data: pd.DataFr
         f"<span style='font-size:28px; color:{risk_color}'>**{result['classification']}**</span>",
         unsafe_allow_html=True,
     )
+    st.caption("Risk score measures current signal stress relative to this stock's own history. Drawdown probability is the model-implied likelihood of a >10% drop in the next 20 trading days. A stock can show a low risk score but high probability if it is inherently volatile — the two metrics are intentionally distinct.")
 
     if MODEL_METRICS:
         base_rate = MODEL_METRICS["base_rate"]
@@ -219,8 +220,9 @@ def _render_report(result: dict, price_data: pd.DataFrame, bench_data: pd.DataFr
     )
     st.plotly_chart(fig_imp, use_container_width=True)
 
-    st.divider()
 
+
+def _render_methodology():
     with st.expander("Methodology"):
         m = MODEL_METRICS or {}
         st.markdown(f"""
@@ -326,6 +328,9 @@ with tab1:
                             st.session_state.commentary = generate_commentary(st.session_state.result)
                         st.rerun()
 
+        st.divider()
+        _render_methodology()
+
 
 # ── TAB 2: Watchlist Screener ──────────────────────────────────────────────────
 
@@ -372,15 +377,14 @@ with tab2:
                     res = predict(t)
                     top_feature = max(res["top_drivers"], key=lambda k: abs(res["top_drivers"][k]))
                     top_val = res["top_drivers"][top_feature]
-                    direction = "↑" if top_val > 0 else "↓"
-                    top_driver_label = f"{direction} {FEATURE_LABELS.get(top_feature, top_feature)}"
 
                     st.session_state.screener_rows.append({
                         "Ticker": t,
                         "Risk Score": res["risk_score"],
                         "Probability": res["probability"],
                         "Classification": res["classification"],
-                        "Top SHAP Driver": top_driver_label,
+                        "Top Driver": FEATURE_LABELS.get(top_feature, top_feature),
+                        "Direction": "Increasing risk" if top_val > 0 else "Reducing risk",
                     })
                     st.session_state.screener_full[t] = res
                 except Exception:
@@ -394,20 +398,34 @@ with tab2:
     # Results table
     if st.session_state.screener_rows:
         results_df = pd.DataFrame(st.session_state.screener_rows).sort_values("Risk Score", ascending=False).reset_index(drop=True)
+        results_df.insert(0, "Rank", range(1, len(results_df) + 1))
 
         def _style_classification(val):
             colors = {"Low": "color: #2ca02c", "Medium": "color: orange", "High": "color: #d62728"}
             return colors.get(val, "")
 
+        def _style_direction(val):
+            return "color: #d62728" if val == "Increasing risk" else "color: #4878cf"
+
         styled = (
             results_df.style
             .map(_style_classification, subset=["Classification"])
+            .map(_style_direction, subset=["Direction"])
             .background_gradient(subset=["Risk Score"], cmap="RdYlGn_r", vmin=0, vmax=100)
             .format({"Probability": "{:.1%}", "Risk Score": "{:.0f}"})
+            .set_properties(**{"text-align": "center"})
+            .set_table_styles([
+                {"selector": "th", "props": [("text-align", "center"), ("padding", "8px 32px"), ("background-color", "#1e1e1e"), ("color", "#fafafa"), ("font-weight", "600"), ("border-bottom", "1px solid #444")]},
+                {"selector": "td", "props": [("text-align", "center !important"), ("padding", "7px 32px"), ("border-bottom", "1px solid #2a2a2a")]},
+                {"selector": "table", "props": [("width", "100%"), ("border-collapse", "collapse"), ("font-size", "14px")]},
+                {"selector": "tr:hover td", "props": [("background-color", "#2a2a2a")]},
+            ])
+            .hide(axis="index")
         )
 
         st.subheader("Risk Ranking")
-        st.dataframe(styled, use_container_width=True, hide_index=True)
+        st.caption("Ranked by model-implied downside risk. Scores and probabilities are model outputs — not financial advice. Drill into any stock below for the full report.")
+        st.markdown(styled.to_html(), unsafe_allow_html=True)
 
         st.divider()
 
@@ -431,6 +449,14 @@ with tab2:
 
         if st.session_state.screener_drill and st.session_state.screener_drill_price is not None:
             drill_result = st.session_state.screener_full[st.session_state.screener_drill]
+            drill_row = next(r for r in st.session_state.screener_rows if r["Ticker"] == st.session_state.screener_drill)
+            sorted_tickers = [r["Ticker"] for r in sorted(st.session_state.screener_rows, key=lambda r: r["Risk Score"], reverse=True)]
+            rank = sorted_tickers.index(st.session_state.screener_drill) + 1
+            total = len(sorted_tickers)
+            st.caption(
+                f"**{st.session_state.screener_drill}** is ranked **#{rank} of {total}** in this watchlist, "
+                f"primarily driven by **{drill_row['Top Driver']}** — {drill_row['Direction'].lower()}."
+            )
             _render_report(
                 drill_result,
                 st.session_state.screener_drill_price,
@@ -457,3 +483,6 @@ with tab2:
                             with st.spinner("Generating commentary..."):
                                 st.session_state.screener_commentary[drill_ticker_key] = generate_commentary(drill_result)
                             st.rerun()
+
+            st.divider()
+            _render_methodology()
