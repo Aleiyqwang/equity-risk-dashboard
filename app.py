@@ -178,8 +178,8 @@ if st.session_state.result is not None:
     if MODEL_METRICS:
         st.subheader("Model Performance")
         mc1, mc2, mc3, mc4 = st.columns(4)
-        mc1.metric("AUC-ROC", f"{MODEL_METRICS['auc_roc']:.2f}", help="1.0 = perfect, 0.5 = random. Measures overall discrimination ability.")
-        mc2.metric("Drawdown Precision", f"{MODEL_METRICS['drawdown_precision']:.0%}", help="When the model flags high risk, how often a drawdown actually occurs.")
+        mc1.metric("AUC-ROC", f"{MODEL_METRICS['auc_roc']:.2f}", help="1.0 = perfect, 0.5 = random. Measures overall ranking ability across all thresholds.")
+        mc2.metric("PR-AUC", f"{MODEL_METRICS['pr_auc']:.2f}" if "pr_auc" in MODEL_METRICS else "—", help="Precision-Recall AUC. More informative than ROC-AUC on imbalanced data — measures how well the model identifies drawdowns without excessive false alarms.")
         mc3.metric("Drawdown Recall", f"{MODEL_METRICS['drawdown_recall']:.0%}", help="Of all actual drawdowns, how many the model successfully identified.")
         mc4.metric("Historical Base Rate", f"{MODEL_METRICS['base_rate']:.1%}", help="How often a >10% drawdown occurs on any given day historically.")
         st.caption(f"Evaluated on out-of-sample test data ({MODEL_METRICS['test_period']}), never seen during training.")

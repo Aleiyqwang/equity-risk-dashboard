@@ -1,8 +1,9 @@
 {
-  "auc_roc": 0.72,
-  "drawdown_precision": 0.44,
-  "drawdown_recall": 0.59,
-  "base_rate": 0.138,
+  "auc_roc": 0.643,
+  "pr_auc": 0.188,
+  "drawdown_precision": 0.174,
+  "drawdown_recall": 0.585,
+  "base_rate": 0.095,
   "n_tickers": 50,
   "train_period": "2005\u20132019",
   "test_period": "2020\u20132024",
