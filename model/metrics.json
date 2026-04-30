@@ -1,0 +1,12 @@
+{
+  "auc_roc": 0.72,
+  "drawdown_precision": 0.44,
+  "drawdown_recall": 0.59,
+  "base_rate": 0.138,
+  "n_tickers": 50,
+  "train_period": "2005\u20132019",
+  "test_period": "2020\u20132024",
+  "n_features": 12,
+  "algorithm": "Gradient Boosting Classifier",
+  "n_estimators": 200
+}

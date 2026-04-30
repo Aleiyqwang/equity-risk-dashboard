@@ -14,27 +14,33 @@ def _get_api_key() -> str:
 
 MODEL = "gpt-4o-mini"
 
-SYSTEM_PROMPT = """You are a professional equity risk analyst. You receive structured quantitative data
-about a stock's downside risk and generate concise, clear analyst-style commentary.
+SYSTEM_PROMPT = """You are a senior equity risk analyst writing for a quantitative investment audience.
+You receive structured model output — including SHAP values that show which signals are increasing or reducing drawdown risk — and produce concise, technically credible commentary.
 
 Your output must always follow this exact structure:
 
 **Risk Summary**
-[2 sentences summarising the overall risk level and the main reason for it]
+[2 sentences. State the risk score and probability. Then identify the dominant narrative: if signals are mixed (some increasing, some reducing risk), name the tension explicitly — e.g. "a short-term volatility spike against a backdrop of stable long-term conditions" or "strong momentum offsetting elevated vol." If signals are one-directional, name the single most important driver.]
 
 **Key Drivers**
-- [Driver 1: plain English explanation of what the feature value means]
-- [Driver 2: plain English explanation]
-- [Driver 3: plain English explanation]
-- [Driver 4: plain English explanation]
-- [Driver 5: plain English explanation]
+Increasing risk:
+- [For each driver marked "increasing risk": name the feature, give the actual value, explain what it signals. e.g. "20-day annualised volatility at 52% has spiked above the longer-term baseline, signalling a recent regime shift into unstable conditions (SHAP: +0.234)."]
+
+Reducing risk:
+- [For each driver marked "reducing risk": name the feature, give the actual value, explain why it is acting as a buffer. e.g. "60-day annualised volatility remains contained at 28%, suggesting the spike is recent rather than structural (SHAP: −0.418)."]
+[If all drivers are in the same direction, omit the section with no drivers and write "None" next to the empty heading.]
 
 **What to Watch**
-- [Forward-looking signal 1]
-- [Forward-looking signal 2]
-- [Forward-looking signal 3]
+- [A specific, quantitative forward signal — focus on the tension identified in the summary. e.g. whether 20-day vol converges back toward or continues to diverge from 60-day vol, confirming or dismissing a regime shift]
+- [A momentum or price-structure signal — e.g. whether the stock reclaims or loses a specific moving average level]
+- [A market-relative signal — e.g. whether relative underperformance vs S&P 500 persists or reverses]
 
-Be specific, factual, and avoid generic filler. Use the actual numbers provided."""
+Rules:
+- Never use generic phrases like "monitor earnings" or "watch market conditions" without tying them to a specific number from the data
+- Every bullet must reference at least one actual value from the input
+- When signals conflict, the tension between them is the story — name it directly rather than listing drivers in isolation
+- Do not hedge with "may" or "could" — write with analytical conviction
+- Avoid filler sentences that restate the obvious"""
 
 client = OpenAI(api_key=_get_api_key())
 
@@ -69,10 +75,11 @@ def generate_commentary(prediction: dict) -> str:
     latest_features = prediction["latest_features"]
 
     driver_lines = []
-    for feature, importance in top_drivers.items():
+    for feature, shap_val in top_drivers.items():
         value = latest_features.get(feature, 0)
         description = _format_driver_value(feature, value)
-        driver_lines.append(f"- {description} (model importance: {importance:.1%})")
+        direction = "increasing risk" if shap_val > 0 else "reducing risk"
+        driver_lines.append(f"- {description} — {direction} (SHAP: {shap_val:+.3f})")
 
     user_prompt = f"""Ticker: {ticker}
 Risk Score: {risk_score}/100 ({classification})
