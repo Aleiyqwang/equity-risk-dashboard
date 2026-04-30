@@ -3,7 +3,7 @@ import os
 import joblib
 import pandas as pd
 from sklearn.ensemble import GradientBoostingClassifier
-from sklearn.metrics import classification_report, roc_auc_score
+from sklearn.metrics import classification_report, roc_auc_score, average_precision_score
 
 from data import download_all, download_ticker, BENCHMARK_TICKER
 from features import add_features_to_training_data
@@ -69,6 +69,7 @@ def train(data: pd.DataFrame):
     y_prob = model.predict_proba(X_test)[:, 1]
     print(classification_report(y_test, y_pred))
     print(f"AUC-ROC: {roc_auc_score(y_test, y_prob):.3f}")
+    print(f"PR-AUC:  {average_precision_score(y_test, y_prob):.3f}")
 
     print("\n=== Feature importances ===")
     importances = pd.Series(model.feature_importances_, index=FEATURE_COLS).sort_values(ascending=False)
@@ -77,6 +78,7 @@ def train(data: pd.DataFrame):
     report = classification_report(y_test, y_pred, output_dict=True)
     metrics = {
         "auc_roc": round(float(roc_auc_score(y_test, y_prob)), 3),
+        "pr_auc": round(float(average_precision_score(y_test, y_prob)), 3),
         "drawdown_precision": round(report["1"]["precision"], 3),
         "drawdown_recall": round(report["1"]["recall"], 3),
         "base_rate": round(float(y_train.mean()), 3),
